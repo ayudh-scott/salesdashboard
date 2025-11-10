@@ -22,19 +22,12 @@ function getBase(): Airtable.Base {
 }
 
 // Export base for backward compatibility (but it will be initialized lazily)
-// Create a proxy that forwards all calls to the actual base instance
-const base = new Proxy({} as Airtable.Base, {
-  get(_target, prop) {
-    const actualBase = getBase();
-    if (prop === '_baseSchema') {
-      return actualBase._baseSchema;
-    }
-    return (actualBase as any)[prop];
+// Simple wrapper that provides table access
+const base = {
+  get(tableName: string) {
+    return getBase()(tableName);
   },
-  apply(_target, _thisArg, args) {
-    return getBase()(args[0] as string);
-  },
-}) as any;
+} as any;
 
 export interface AirtableField {
   id: string;
