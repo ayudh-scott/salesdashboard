@@ -31,3 +31,32 @@ export function formatRelativeTime(date: string | Date): string {
   return formatDate(d);
 }
 
+/**
+ * Format number in Indian numbering system (lakhs and crores)
+ * Examples: 1000 -> ₹1,000 | 100000 -> ₹1,00,000 | 10000000 -> ₹1,00,00,000
+ */
+export function formatINR(amount: number): string {
+  return `₹${amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+}
+
+/**
+ * Format number in Indian numbering system with compact notation for large numbers
+ * Examples: 1000 -> ₹1,000 | 100000 -> ₹1 Lakh | 10000000 -> ₹1 Crore
+ */
+export function formatINRCompact(amount: number): string {
+  if (amount >= 10000000) {
+    // Crores
+    const crores = amount / 10000000;
+    return `₹${crores.toFixed(crores % 1 === 0 ? 0 : 1)} Cr`;
+  } else if (amount >= 100000) {
+    // Lakhs
+    const lakhs = amount / 100000;
+    return `₹${lakhs.toFixed(lakhs % 1 === 0 ? 0 : 1)} L`;
+  } else if (amount >= 1000) {
+    // Thousands
+    const thousands = amount / 1000;
+    return `₹${thousands.toFixed(thousands % 1 === 0 ? 0 : 1)} K`;
+  }
+  return formatINR(amount);
+}
+
