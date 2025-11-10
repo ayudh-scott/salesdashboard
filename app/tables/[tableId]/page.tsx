@@ -6,6 +6,7 @@ import { Navbar } from '@/components/Navbar';
 import { BottomNav } from '@/components/BottomNav';
 import { supabase } from '@/lib/supabaseClient.client';
 import { motion, AnimatePresence } from 'framer-motion';
+import { RefreshIndicator } from '@/components/RefreshIndicator';
 
 interface TableRecord {
   id: string;
@@ -25,10 +26,59 @@ export default function TableDetailPage() {
   const [selectedRecord, setSelectedRecord] = useState<TableRecord | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [tableName, setTableName] = useState('');
+  const [lastRefreshed, setLastRefreshed] = useState<Date | undefined>(undefined);
+
+  const fetchRecords = async () => {
+    try {
+      console.log('Fetching fresh records for table:', tableId);
+      const { data, error } = await supabase
+        .from(tableId)
+        .select('*')
+        .eq('deleted', false)
+        .order('updated_at', { ascending: false })
+        .limit(500);
+
+      if (error) {
+        console.error('Error fetching records:', error);
+        return;
+      }
+
+      setRecords(data || []);
+      setLastRefreshed(new Date());
+    } catch (error) {
+      console.error('Error:', error);
+    }
+  };
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      // Get table metadata with fresh query
+      console.log('Fetching fresh data for table:', tableId);
+      const { data: metadata } = await supabase
+        .from('_table_metadata')
+        .select('display_name')
+        .eq('table_name', tableId)
+        .single();
+
+      if (metadata) {
+        setTableName(metadata.display_name);
+      }
+
+      await fetchRecords();
+    } catch (error) {
+      console.error('Error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function fetchData() {
+    let channel: any;
+
+    async function initData() {
       try {
+        setLoading(true);
         // Get table metadata
         const { data: metadata } = await supabase
           .from('_table_metadata')
@@ -41,7 +91,7 @@ export default function TableDetailPage() {
         }
 
         // Subscribe to realtime updates
-        const channel = supabase
+        channel = supabase
           .channel(`table-${tableId}`)
           .on(
             'postgres_changes',
@@ -59,10 +109,6 @@ export default function TableDetailPage() {
           .subscribe();
 
         await fetchRecords();
-
-        return () => {
-          supabase.removeChannel(channel);
-        };
       } catch (error) {
         console.error('Error:', error);
       } finally {
@@ -70,27 +116,7 @@ export default function TableDetailPage() {
       }
     }
 
-    async function fetchRecords() {
-      try {
-        const { data, error } = await supabase
-          .from(tableId)
-          .select('*')
-          .eq('deleted', false)
-          .order('updated_at', { ascending: false })
-          .limit(500);
-
-        if (error) {
-          console.error('Error fetching records:', error);
-          return;
-        }
-
-        setRecords(data || []);
-      } catch (error) {
-        console.error('Error:', error);
-      }
-    }
-
-    fetchData();
+    initData();
 
     // Auto-refresh every 5 minutes
     const refreshInterval = setInterval(() => {
@@ -99,6 +125,9 @@ export default function TableDetailPage() {
 
     return () => {
       clearInterval(refreshInterval);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [tableId]);
 
@@ -160,9 +189,15 @@ export default function TableDetailPage() {
             </svg>
             Back
           </button>
-          <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
-            {tableName || tableId}
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
+              {tableName || tableId}
+            </h2>
+            <RefreshIndicator
+              onRefresh={fetchData}
+              lastRefreshed={lastRefreshed || undefined}
+            />
+          </div>
           <p className="text-gray-600 dark:text-gray-400 mb-4">
             {records.length} record{records.length !== 1 ? 's' : ''}
           </p>

@@ -24,7 +24,9 @@ export default function Home() {
 
   const fetchData = async () => {
     try {
-      // Fetch table metadata
+      setLoading(true);
+      // Fetch table metadata with cache busting
+      const cacheBuster = `?t=${Date.now()}`;
       const { data: metadata, error: metadataError } = await supabase
         .from('_table_metadata')
         .select('*')
@@ -38,7 +40,7 @@ export default function Home() {
         return;
       }
 
-      // Fetch record counts for each table
+      // Fetch record counts for each table with fresh queries
       const tablesWithCounts = await Promise.all(
         (metadata || []).map(async (table) => {
           const { count, error } = await supabase
@@ -53,11 +55,15 @@ export default function Home() {
         })
       );
 
+      console.log('Fetched', tablesWithCounts.length, 'tables with', 
+        tablesWithCounts.reduce((sum, table) => sum + (table.record_count || 0), 0), 
+        'total records');
       setTables(tablesWithCounts);
       setTotalRecords(
         tablesWithCounts.reduce((sum, table) => sum + (table.record_count || 0), 0)
       );
       setLastRefreshed(new Date());
+      console.log('Data refresh completed at', new Date().toISOString());
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {

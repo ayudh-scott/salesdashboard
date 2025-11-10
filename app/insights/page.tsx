@@ -154,10 +154,11 @@ export default function InsightsPage() {
         const startDateStr = start.toISOString().split('T')[0];
         const endDateStr = end.toISOString().split('T')[0];
 
-        // Fetch RMP Orders data
+        // Fetch RMP Orders data with fresh query
+        console.log('Fetching fresh RMP Orders data from', startDateStr, 'to', endDateStr);
         const { data: rmpOrders, error: rmpError } = await supabase
           .from('rmp_orders')
-          .select('order_date, total_amount, sales_coordinator, raw_json')
+          .select('order_date, total_amount, sales_coordinator, customer_name, raw_json')
           .eq('deleted', false)
           .not('order_date', 'is', null)
           .gte('order_date', startDateStr)
@@ -168,10 +169,11 @@ export default function InsightsPage() {
           console.error('Error fetching RMP orders:', rmpError);
         }
 
-        // Fetch Order Report data
+        // Fetch Order Report data with fresh query
+        console.log('Fetching fresh Order Report data from', startDateStr, 'to', endDateStr);
         const { data: orderReports, error: orderError } = await supabase
           .from('order_report')
-          .select('order_date, total_sales__including_gst_, sales_value__ex_taxes_, key_account_manager__kam_, raw_json')
+          .select('order_date, total_sales__including_gst_, sales_value__ex_taxes_, key_account_manager__kam_, customer_name, raw_json')
           .eq('deleted', false)
           .not('order_date', 'is', null)
           .gte('order_date', startDateStr)
@@ -183,7 +185,9 @@ export default function InsightsPage() {
         }
 
       // Process sales data separately
+      console.log('Fetched', rmpOrders?.length || 0, 'RMP orders and', orderReports?.length || 0, 'order reports');
       processSalesData(rmpOrders || [], orderReports || []);
+      console.log('Sales data processing completed');
     } catch (error) {
       console.error('Error fetching sales data:', error);
     }
@@ -212,14 +216,11 @@ export default function InsightsPage() {
           const coordinator = order.sales_coordinator || order.raw_json?.sales_coordinator || 'Unknown';
           rmpSalesByCoordinator.set(coordinator, (rmpSalesByCoordinator.get(coordinator) || 0) + amount);
           
-          // Extract customer name from various possible fields
+          // Extract customer name from "Customer Name" field
           const customer = order.customer_name || 
+                          order.raw_json?.['Customer Name'] ||
                           order.raw_json?.customer_name || 
                           order.raw_json?.customer || 
-                          order.raw_json?.client_name ||
-                          order.raw_json?.client ||
-                          order.raw_json?.company_name ||
-                          order.raw_json?.company ||
                           'Unknown Customer';
           
           // Track customers per coordinator
@@ -266,13 +267,11 @@ export default function InsightsPage() {
             'Unknown';
           orderReportSalesByCoordinator.set(coordinator, (orderReportSalesByCoordinator.get(coordinator) || 0) + amount);
           
-          // Extract customer name from various possible fields
-          const customer = order.raw_json?.customer_name || 
+          // Extract customer name from "Customer Name" field
+          const customer = order.customer_name ||
+                          order.raw_json?.['Customer Name'] ||
+                          order.raw_json?.customer_name || 
                           order.raw_json?.customer || 
-                          order.raw_json?.client_name ||
-                          order.raw_json?.client ||
-                          order.raw_json?.company_name ||
-                          order.raw_json?.company ||
                           order.raw_json?.customer_name__from_customers_ ||
                           'Unknown Customer';
           
@@ -326,7 +325,7 @@ export default function InsightsPage() {
         const customers = Array.from(customerMap.entries())
           .map(([customer, sales]) => ({ customer, sales }))
           .sort((a, b) => b.sales - a.sales)
-          .slice(0, 10); // Top 10
+          .slice(0, 5); // Top 5
         rmpTopCustomers.set(coordinator, customers);
       });
       setRmpCoordinatorCustomers(rmpTopCustomers);
@@ -337,7 +336,7 @@ export default function InsightsPage() {
         const customers = Array.from(customerMap.entries())
           .map(([customer, sales]) => ({ customer, sales }))
           .sort((a, b) => b.sales - a.sales)
-          .slice(0, 10); // Top 10
+          .slice(0, 5); // Top 5
         orderReportTopCustomers.set(coordinator, customers);
       });
       setOrderReportCoordinatorCustomers(orderReportTopCustomers);
@@ -878,8 +877,11 @@ export default function InsightsPage() {
                 className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8"
               >
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                  Top 10 Customers by Sales Coordinator (RMP Orders)
+                  Top 5 Customers by Sales Coordinator (RMP Orders)
                 </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  Showing top 5 customers with percentage of contribution and amount
+                </p>
                 <div className="space-y-6">
                   {Array.from(rmpCoordinatorCustomers.entries())
                     .sort((a, b) => {
@@ -892,7 +894,7 @@ export default function InsightsPage() {
                       const coordinatorTotal = customers.reduce((sum, c) => sum + c.sales, 0);
                       return (
                         <div key={coordinator} className="border-b border-gray-200 dark:border-gray-700 pb-6 last:border-b-0 last:pb-0">
-                          <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center justify-between mb-4">
                             <h4 className="text-md font-semibold text-gray-900 dark:text-white">
                               {coordinator}
                             </h4>
@@ -906,21 +908,31 @@ export default function InsightsPage() {
                               return (
                                 <div
                                   key={customer.customer}
-                                  className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3 border border-gray-200 dark:border-gray-700"
+                                  className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow"
                                 >
-                                  <div className="flex items-center justify-between mb-1">
-                                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400 bg-blue-100 dark:bg-blue-900/30 px-2 py-1 rounded">
                                       #{index + 1}
                                     </span>
+                                  </div>
+                                  <div className="text-sm font-semibold text-gray-900 dark:text-white mb-3 truncate" title={customer.customer}>
+                                    {customer.customer}
+                                  </div>
+                                  <div className="flex items-baseline justify-between mb-1">
                                     <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      Contribution:
+                                    </span>
+                                    <span className="text-sm font-semibold text-gray-600 dark:text-gray-300">
                                       {percentage.toFixed(1)}%
                                     </span>
                                   </div>
-                                  <div className="text-sm font-semibold text-gray-900 dark:text-white mb-1 truncate" title={customer.customer}>
-                                    {customer.customer}
-                                  </div>
-                                  <div className="text-sm text-blue-600 dark:text-blue-400 font-medium">
-                                    {formatINR(customer.sales)}
+                                  <div className="flex items-baseline justify-between">
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      Amount:
+                                    </span>
+                                    <span className="text-base text-blue-600 dark:text-blue-400 font-bold">
+                                      {formatINR(customer.sales)}
+                                    </span>
                                   </div>
                                 </div>
                               );
@@ -1035,8 +1047,11 @@ export default function InsightsPage() {
                 className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8"
               >
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                  Top 10 Customers by Sales Coordinator (Order Report)
+                  Top 5 Customers by Sales Coordinator (Order Report)
                 </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  Showing top 5 customers with percentage of contribution and amount
+                </p>
                 <div className="space-y-6">
                   {Array.from(orderReportCoordinatorCustomers.entries())
                     .sort((a, b) => {
@@ -1049,7 +1064,7 @@ export default function InsightsPage() {
                       const coordinatorTotal = customers.reduce((sum, c) => sum + c.sales, 0);
                       return (
                         <div key={coordinator} className="border-b border-gray-200 dark:border-gray-700 pb-6 last:border-b-0 last:pb-0">
-                          <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center justify-between mb-4">
                             <h4 className="text-md font-semibold text-gray-900 dark:text-white">
                               {coordinator}
                             </h4>
@@ -1063,21 +1078,31 @@ export default function InsightsPage() {
                               return (
                                 <div
                                   key={customer.customer}
-                                  className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3 border border-gray-200 dark:border-gray-700"
+                                  className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow"
                                 >
-                                  <div className="flex items-center justify-between mb-1">
-                                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400 bg-green-100 dark:bg-green-900/30 px-2 py-1 rounded">
                                       #{index + 1}
                                     </span>
+                                  </div>
+                                  <div className="text-sm font-semibold text-gray-900 dark:text-white mb-3 truncate" title={customer.customer}>
+                                    {customer.customer}
+                                  </div>
+                                  <div className="flex items-baseline justify-between mb-1">
                                     <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      Contribution:
+                                    </span>
+                                    <span className="text-sm font-semibold text-gray-600 dark:text-gray-300">
                                       {percentage.toFixed(1)}%
                                     </span>
                                   </div>
-                                  <div className="text-sm font-semibold text-gray-900 dark:text-white mb-1 truncate" title={customer.customer}>
-                                    {customer.customer}
-                                  </div>
-                                  <div className="text-sm text-green-600 dark:text-green-400 font-medium">
-                                    {formatINR(customer.sales)}
+                                  <div className="flex items-baseline justify-between">
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      Amount:
+                                    </span>
+                                    <span className="text-base text-green-600 dark:text-green-400 font-bold">
+                                      {formatINR(customer.sales)}
+                                    </span>
                                   </div>
                                 </div>
                               );

@@ -6,6 +6,7 @@ import { BottomNav } from '@/components/BottomNav';
 import { TableCard } from '@/components/TableCard';
 import { supabase } from '@/lib/supabaseClient.client';
 import { motion } from 'framer-motion';
+import { RefreshIndicator } from '@/components/RefreshIndicator';
 
 interface TableMetadata {
   table_name: string;
@@ -18,45 +19,48 @@ export default function TablesPage() {
   const [tables, setTables] = useState<TableMetadata[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [lastRefreshed, setLastRefreshed] = useState<Date | undefined>(undefined);
+
+  const fetchTables = async () => {
+    try {
+      setLoading(true);
+      const { data: metadata, error } = await supabase
+        .from('_table_metadata')
+        .select('*')
+        .order('display_name');
+
+      if (error) {
+        console.error('Error fetching tables:', error);
+        setTables([]);
+        setLoading(false);
+        return;
+      }
+
+      // Fetch record counts with fresh queries
+      const tablesWithCounts = await Promise.all(
+        (metadata || []).map(async (table) => {
+          const { count } = await supabase
+            .from(table.table_name)
+            .select('*', { count: 'exact', head: true })
+            .eq('deleted', false);
+
+          return {
+            ...table,
+            record_count: count || 0,
+          };
+        })
+      );
+
+      setTables(tablesWithCounts);
+      setLastRefreshed(new Date());
+    } catch (error) {
+      console.error('Error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function fetchTables() {
-      try {
-        const { data: metadata, error } = await supabase
-          .from('_table_metadata')
-          .select('*')
-          .order('display_name');
-
-        if (error) {
-          console.error('Error fetching tables:', error);
-          setTables([]);
-          setLoading(false);
-          return;
-        }
-
-        // Fetch record counts
-        const tablesWithCounts = await Promise.all(
-          (metadata || []).map(async (table) => {
-            const { count } = await supabase
-              .from(table.table_name)
-              .select('*', { count: 'exact', head: true })
-              .eq('deleted', false);
-
-            return {
-              ...table,
-              record_count: count || 0,
-            };
-          })
-        );
-
-        setTables(tablesWithCounts);
-      } catch (error) {
-        console.error('Error:', error);
-      } finally {
-        setLoading(false);
-      }
-    }
-
     fetchTables();
 
     // Auto-refresh every 5 minutes
@@ -97,9 +101,15 @@ export default function TablesPage() {
           animate={{ opacity: 1, y: 0 }}
           className="mb-8"
         >
-          <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
-            All Tables
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
+              All Tables
+            </h2>
+            <RefreshIndicator
+              onRefresh={fetchTables}
+              lastRefreshed={lastRefreshed || undefined}
+            />
+          </div>
 
           {/* Search */}
           <div className="relative max-w-md">

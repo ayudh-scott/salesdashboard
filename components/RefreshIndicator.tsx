@@ -24,20 +24,38 @@ export function RefreshIndicator({ onRefresh, lastRefreshed }: RefreshIndicatorP
     return () => clearInterval(interval);
   }, [lastRefreshed]);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (!onRefresh || isRefreshing) return;
+    
+    setIsRefreshing(true);
+    try {
+      console.log('Refresh button clicked, calling onRefresh...');
+      await onRefresh();
+      console.log('Refresh completed');
+    } catch (error) {
+      console.error('Error during refresh:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   return (
-    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+    <div className="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-400">
       {lastRefreshed && (
-        <span>Last refreshed: {timeSinceRefresh}</span>
+        <span className="text-xs sm:text-sm">Last refreshed: {timeSinceRefresh}</span>
       )}
       {onRefresh && (
         <button
-          onClick={onRefresh}
-          className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
           aria-label="Refresh data"
           title="Refresh data"
         >
           <svg
-            className="w-4 h-4 text-gray-600 dark:text-gray-400"
+            className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -49,6 +67,7 @@ export function RefreshIndicator({ onRefresh, lastRefreshed }: RefreshIndicatorP
               d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
             />
           </svg>
+          <span className="hidden sm:inline">{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
         </button>
       )}
     </div>

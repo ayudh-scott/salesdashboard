@@ -11,5 +11,16 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Supabase environment variables not set. Some features may not work.');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  db: {
+    schema: 'public',
+  },
+  global: {
+    headers: {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    },
+  },
+});
 
