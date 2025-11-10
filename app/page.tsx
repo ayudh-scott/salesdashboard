@@ -20,7 +20,7 @@ export default function Home() {
   const [tables, setTables] = useState<TableMetadata[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalRecords, setTotalRecords] = useState(0);
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | undefined>(undefined);
 
   const fetchData = async () => {
     try {
@@ -118,7 +118,7 @@ export default function Home() {
             <div className="mt-2">
               <RefreshIndicator
                 onRefresh={fetchData}
-                lastRefreshed={lastRefreshed}
+                lastRefreshed={lastRefreshed || undefined}
               />
             </div>
           </div>

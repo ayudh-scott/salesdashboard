@@ -80,7 +80,7 @@ export default function InsightsPage() {
     mom: 0,
     yoy: 0,
   });
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | undefined>(undefined);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const fetchData = async () => {
@@ -466,7 +466,7 @@ export default function InsightsPage() {
               <div className="mt-2">
                 <RefreshIndicator
                   onRefresh={fetchData}
-                  lastRefreshed={lastRefreshed}
+                  lastRefreshed={lastRefreshed || undefined}
                 />
               </div>
             </div>
