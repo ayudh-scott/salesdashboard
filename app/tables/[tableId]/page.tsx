@@ -7,10 +7,10 @@ import { BottomNav } from '@/components/BottomNav';
 import { supabase } from '@/lib/supabaseClient.client';
 import { motion, AnimatePresence } from 'framer-motion';
 
-interface Record {
+interface TableRecord {
   id: string;
   airtable_id: string;
-  raw_json: Record<string, any>;
+  raw_json: { [key: string]: any };
   created_at: string;
   updated_at: string;
   [key: string]: any;
@@ -20,9 +20,9 @@ export default function TableDetailPage() {
   const params = useParams();
   const router = useRouter();
   const tableId = params.tableId as string;
-  const [records, setRecords] = useState<Record[]>([]);
+  const [records, setRecords] = useState<TableRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedRecord, setSelectedRecord] = useState<Record | null>(null);
+  const [selectedRecord, setSelectedRecord] = useState<TableRecord | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [tableName, setTableName] = useState('');
 
