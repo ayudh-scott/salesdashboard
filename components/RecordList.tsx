@@ -3,18 +3,18 @@
 import { motion } from 'framer-motion';
 import { formatDate } from '@/lib/utils';
 
-interface Record {
+interface TableRecord {
   id: string;
   airtable_id: string;
-  raw_json: Record<string, any>;
+  raw_json: { [key: string]: any };
   created_at: string;
   updated_at: string;
   [key: string]: any;
 }
 
 interface RecordListProps {
-  records: Record[];
-  onRecordClick?: (record: Record) => void;
+  records: TableRecord[];
+  onRecordClick?: (record: TableRecord) => void;
 }
 
 export function RecordList({ records, onRecordClick }: RecordListProps) {
