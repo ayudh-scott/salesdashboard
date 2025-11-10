@@ -22,8 +22,9 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatINR, formatINRCompact } from '@/lib/utils';
 import { RefreshIndicator } from '@/components/RefreshIndicator';
+import React from 'react';
 
 interface TableMetadata {
   table_name: string;
@@ -68,6 +69,11 @@ export default function InsightsPage() {
   const [orderReportCoordinatorSales, setOrderReportCoordinatorSales] = useState<CoordinatorSales[]>([]);
   const [rmpCoordinatorTable, setRmpCoordinatorTable] = useState<any[]>([]);
   const [orderReportCoordinatorTable, setOrderReportCoordinatorTable] = useState<any[]>([]);
+  const [selectedCoordinator, setSelectedCoordinator] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'all' | 'coordinator' | 'date'>('all');
+  const [rmpCoordinatorCustomers, setRmpCoordinatorCustomers] = useState<Map<string, Array<{customer: string; sales: number}>>>(new Map());
+  const [orderReportCoordinatorCustomers, setOrderReportCoordinatorCustomers] = useState<Map<string, Array<{customer: string; sales: number}>>>(new Map());
   const [growthMetrics, setGrowthMetrics] = useState<GrowthMetrics>({
     dod: 0,
     wow: 0,
@@ -188,6 +194,7 @@ export default function InsightsPage() {
       const rmpSalesByDate = new Map<string, number>();
       const rmpSalesByCoordinator = new Map<string, number>();
       const rmpTableData: any[] = [];
+      const rmpCustomersByCoordinator = new Map<string, Map<string, number>>();
       let rmpTotal = 0;
 
       rmpOrders.forEach((order) => {
@@ -205,12 +212,30 @@ export default function InsightsPage() {
           const coordinator = order.sales_coordinator || order.raw_json?.sales_coordinator || 'Unknown';
           rmpSalesByCoordinator.set(coordinator, (rmpSalesByCoordinator.get(coordinator) || 0) + amount);
           
+          // Extract customer name from various possible fields
+          const customer = order.customer_name || 
+                          order.raw_json?.customer_name || 
+                          order.raw_json?.customer || 
+                          order.raw_json?.client_name ||
+                          order.raw_json?.client ||
+                          order.raw_json?.company_name ||
+                          order.raw_json?.company ||
+                          'Unknown Customer';
+          
+          // Track customers per coordinator
+          if (!rmpCustomersByCoordinator.has(coordinator)) {
+            rmpCustomersByCoordinator.set(coordinator, new Map());
+          }
+          const customerMap = rmpCustomersByCoordinator.get(coordinator)!;
+          customerMap.set(customer, (customerMap.get(customer) || 0) + amount);
+          
           // Add to table data
           rmpTableData.push({
             date,
             coordinator,
             sales: amount,
             orderId: order.raw_json?.order_id || '-',
+            customer,
           });
         }
       });
@@ -219,6 +244,7 @@ export default function InsightsPage() {
       const orderReportSalesByDate = new Map<string, number>();
       const orderReportSalesByCoordinator = new Map<string, number>();
       const orderReportTableData: any[] = [];
+      const orderReportCustomersByCoordinator = new Map<string, Map<string, number>>();
       let orderReportTotal = 0;
 
       orderReports.forEach((order) => {
@@ -240,12 +266,30 @@ export default function InsightsPage() {
             'Unknown';
           orderReportSalesByCoordinator.set(coordinator, (orderReportSalesByCoordinator.get(coordinator) || 0) + amount);
           
+          // Extract customer name from various possible fields
+          const customer = order.raw_json?.customer_name || 
+                          order.raw_json?.customer || 
+                          order.raw_json?.client_name ||
+                          order.raw_json?.client ||
+                          order.raw_json?.company_name ||
+                          order.raw_json?.company ||
+                          order.raw_json?.customer_name__from_customers_ ||
+                          'Unknown Customer';
+          
+          // Track customers per coordinator
+          if (!orderReportCustomersByCoordinator.has(coordinator)) {
+            orderReportCustomersByCoordinator.set(coordinator, new Map());
+          }
+          const customerMap = orderReportCustomersByCoordinator.get(coordinator)!;
+          customerMap.set(customer, (customerMap.get(customer) || 0) + amount);
+          
           // Add to table data
           orderReportTableData.push({
             date,
             coordinator,
             sales: amount,
             orderId: order.raw_json?.order_id || order.raw_json?.jobsheet_number || '-',
+            customer,
           });
         }
       });
@@ -275,6 +319,28 @@ export default function InsightsPage() {
       setOrderReportTotalSales(orderReportTotal);
       setRmpCoordinatorTable(rmpTableData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
       setOrderReportCoordinatorTable(orderReportTableData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+
+      // Process top customers per coordinator for RMP
+      const rmpTopCustomers = new Map<string, Array<{customer: string; sales: number}>>();
+      rmpCustomersByCoordinator.forEach((customerMap, coordinator) => {
+        const customers = Array.from(customerMap.entries())
+          .map(([customer, sales]) => ({ customer, sales }))
+          .sort((a, b) => b.sales - a.sales)
+          .slice(0, 10); // Top 10
+        rmpTopCustomers.set(coordinator, customers);
+      });
+      setRmpCoordinatorCustomers(rmpTopCustomers);
+
+      // Process top customers per coordinator for Order Report
+      const orderReportTopCustomers = new Map<string, Array<{customer: string; sales: number}>>();
+      orderReportCustomersByCoordinator.forEach((customerMap, coordinator) => {
+        const customers = Array.from(customerMap.entries())
+          .map(([customer, sales]) => ({ customer, sales }))
+          .sort((a, b) => b.sales - a.sales)
+          .slice(0, 10); // Top 10
+        orderReportTopCustomers.set(coordinator, customers);
+      });
+      setOrderReportCoordinatorCustomers(orderReportTopCustomers);
 
       // Calculate growth metrics from combined data
       const combinedDaily = [...rmpDailyArray, ...orderReportDailyArray].reduce((acc, item) => {
@@ -481,11 +547,11 @@ export default function InsightsPage() {
           >
             <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">Total Sales Value</div>
             <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              ₹{(rmpTotalSales + orderReportTotalSales).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              {formatINR(rmpTotalSales + orderReportTotalSales)}
             </div>
             <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-              RMP: ₹{rmpTotalSales.toLocaleString('en-IN', { maximumFractionDigits: 0 })} | 
-              Orders: ₹{orderReportTotalSales.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              RMP: {formatINR(rmpTotalSales)} | 
+              Orders: {formatINR(orderReportTotalSales)}
             </div>
           </motion.div>
 
@@ -612,13 +678,13 @@ export default function InsightsPage() {
                               {item.coordinator}
                             </td>
                             <td className="py-3 px-4 text-sm text-right text-gray-600 dark:text-gray-400">
-                              ₹{item.rmp.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                              {formatINR(item.rmp)}
                             </td>
                             <td className="py-3 px-4 text-sm text-right text-gray-600 dark:text-gray-400">
-                              ₹{item.orderReport.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                              {formatINR(item.orderReport)}
                             </td>
                             <td className="py-3 px-4 text-sm text-right text-gray-900 dark:text-white font-bold">
-                              ₹{item.total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                              {formatINR(item.total)}
                             </td>
                             <td className="py-3 px-4 text-sm text-right text-gray-600 dark:text-gray-400">
                               {percentage.toFixed(1)}%
@@ -646,12 +712,12 @@ export default function InsightsPage() {
                 RMP Orders - Sales by Coordinator
               </h3>
               <ResponsiveContainer width="100%" height={400}>
-                <BarChart data={rmpCoordinatorSales.slice(0, 10)} layout="vertical">
+                <BarChart data={rmpCoordinatorSales.slice(0, 15)} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis
                     type="number"
                     tick={{ fill: '#6b7280', fontSize: 12 }}
-                    tickFormatter={(value) => `₹${(value / 1000).toFixed(0)}k`}
+                    tickFormatter={(value) => formatINRCompact(value)}
                   />
                   <YAxis
                     type="category"
@@ -665,7 +731,7 @@ export default function InsightsPage() {
                       border: '1px solid #e5e7eb',
                       borderRadius: '8px',
                     }}
-                    formatter={(value: number) => [`₹${value.toLocaleString('en-IN')}`, 'Sales']}
+                    formatter={(value: number) => [formatINR(value), 'Sales']}
                   />
                   <Bar dataKey="sales" fill="#3b82f6" radius={[0, 8, 8, 0]} />
                 </BarChart>
@@ -678,51 +744,194 @@ export default function InsightsPage() {
               transition={{ delay: 0.8 }}
               className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8"
             >
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                RMP Orders - Detailed View (Sales Coordinator & Date)
-              </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-200 dark:border-gray-700">
-                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">
-                        Date
-                      </th>
-                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">
-                        Sales Coordinator
-                      </th>
-                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">
-                        Order ID
-                      </th>
-                      <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">
-                        Sales Value
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rmpCoordinatorTable.slice(0, 100).map((item, index) => (
-                      <tr
-                        key={index}
-                        className="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50"
-                      >
-                        <td className="py-3 px-4 text-sm text-gray-900 dark:text-white">
-                          {new Date(item.date).toLocaleDateString('en-IN')}
-                        </td>
-                        <td className="py-3 px-4 text-sm text-gray-900 dark:text-white">
-                          {item.coordinator}
-                        </td>
-                        <td className="py-3 px-4 text-sm text-gray-600 dark:text-gray-400">
-                          {item.orderId}
-                        </td>
-                        <td className="py-3 px-4 text-sm text-right text-gray-900 dark:text-white font-medium">
-                          ₹{item.sales.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                  RMP Orders - Detailed View
+                </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Sales data by coordinator and date
+                </p>
               </div>
+
+              {/* Interactive Heatmap/Timeline Chart */}
+              {(() => {
+                // Prepare data for heatmap
+                const heatmapData = new Map<string, Map<string, number>>();
+                const coordinators = new Set<string>();
+                const dates = new Set<string>();
+
+                rmpCoordinatorTable.forEach((item) => {
+                  coordinators.add(item.coordinator);
+                  dates.add(item.date);
+                  if (!heatmapData.has(item.date)) {
+                    heatmapData.set(item.date, new Map());
+                  }
+                  const dateMap = heatmapData.get(item.date)!;
+                  dateMap.set(item.coordinator, (dateMap.get(item.coordinator) || 0) + item.sales);
+                });
+
+                const sortedDates = Array.from(dates).sort();
+                // Sort coordinators by total sales (high to low)
+                const sortedCoordinators = Array.from(coordinators).sort((a, b) => {
+                  let aTotal = 0;
+                  let bTotal = 0;
+                  heatmapData.forEach((dateMap) => {
+                    aTotal += dateMap.get(a) || 0;
+                    bTotal += dateMap.get(b) || 0;
+                  });
+                  return bTotal - aTotal; // High to low
+                });
+
+                // Get max value for color scaling
+                let maxValue = 0;
+                heatmapData.forEach((dateMap) => {
+                  dateMap.forEach((value) => {
+                    if (value > maxValue) maxValue = value;
+                  });
+                });
+
+                return (
+                  <div className="mb-6">
+                    <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                      Sales Heatmap
+                    </h4>
+                    <div className="overflow-x-auto">
+                      <div className="inline-block min-w-full">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr>
+                              <th className="text-left py-2 px-2 text-xs font-semibold text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-800 z-10">
+                                Date \ Coordinator
+                              </th>
+                              {sortedCoordinators.slice(0, 15).map((coord) => (
+                                <th
+                                  key={coord}
+                                  className="text-center py-2 px-2 text-xs font-semibold text-gray-700 dark:text-gray-300 min-w-[100px]"
+                                >
+                                  <div className="truncate max-w-[100px]" title={coord}>
+                                    {coord}
+                                  </div>
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sortedDates.slice(-14).map((date) => {
+                              const dateMap = heatmapData.get(date) || new Map();
+                              return (
+                                <tr key={date}>
+                                  <td className="text-xs text-gray-900 dark:text-white py-2 px-2 sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium">
+                                    {new Date(date).toLocaleDateString('en-IN', {
+                                      month: 'short',
+                                      day: 'numeric',
+                                    })}
+                                  </td>
+                                  {sortedCoordinators.slice(0, 15).map((coord) => {
+                                    const value = dateMap.get(coord) || 0;
+                                    const intensity = maxValue > 0 ? value / maxValue : 0;
+                                    // Light mode colors: gradient from light blue to dark blue
+                                    const bgColor = intensity > 0.7 
+                                      ? 'bg-blue-600 dark:bg-blue-600' 
+                                      : intensity > 0.4 
+                                      ? 'bg-blue-400 dark:bg-blue-400' 
+                                      : intensity > 0.1 
+                                      ? 'bg-blue-200 dark:bg-blue-200' 
+                                      : 'bg-gray-100 dark:bg-gray-700';
+                                    
+                                    // Text color based on background intensity
+                                    const textColor = intensity > 0.4 
+                                      ? 'text-white dark:text-white' 
+                                      : intensity > 0.1
+                                      ? 'text-blue-900 dark:text-white'
+                                      : 'text-gray-400 dark:text-gray-400';
+                                    
+                                    return (
+                                      <td
+                                        key={coord}
+                                        className={`text-center py-2 px-2 text-xs ${bgColor} ${textColor} ${
+                                          value > 0 ? 'font-medium' : ''
+                                        }`}
+                                        title={`${coord} on ${new Date(date).toLocaleDateString('en-IN')}: ${formatINR(value)}`}
+                                      >
+                                        {value > 0 ? formatINRCompact(value) : '-'}
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </motion.div>
+
+            {/* Top Customers by Coordinator - RMP Orders */}
+            {rmpCoordinatorCustomers.size > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.9 }}
+                className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8"
+              >
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                  Top 10 Customers by Sales Coordinator (RMP Orders)
+                </h3>
+                <div className="space-y-6">
+                  {Array.from(rmpCoordinatorCustomers.entries())
+                    .sort((a, b) => {
+                      // Sort coordinators by total sales
+                      const aTotal = a[1].reduce((sum, c) => sum + c.sales, 0);
+                      const bTotal = b[1].reduce((sum, c) => sum + c.sales, 0);
+                      return bTotal - aTotal;
+                    })
+                    .map(([coordinator, customers]) => {
+                      const coordinatorTotal = customers.reduce((sum, c) => sum + c.sales, 0);
+                      return (
+                        <div key={coordinator} className="border-b border-gray-200 dark:border-gray-700 pb-6 last:border-b-0 last:pb-0">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-md font-semibold text-gray-900 dark:text-white">
+                              {coordinator}
+                            </h4>
+                            <span className="text-sm text-gray-600 dark:text-gray-400">
+                              Total: {formatINR(coordinatorTotal)}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {customers.map((customer, index) => {
+                              const percentage = coordinatorTotal > 0 ? (customer.sales / coordinatorTotal) * 100 : 0;
+                              return (
+                                <div
+                                  key={customer.customer}
+                                  className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3 border border-gray-200 dark:border-gray-700"
+                                >
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                      #{index + 1}
+                                    </span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      {percentage.toFixed(1)}%
+                                    </span>
+                                  </div>
+                                  <div className="text-sm font-semibold text-gray-900 dark:text-white mb-1 truncate" title={customer.customer}>
+                                    {customer.customer}
+                                  </div>
+                                  <div className="text-sm text-blue-600 dark:text-blue-400 font-medium">
+                                    {formatINR(customer.sales)}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </motion.div>
+            )}
           </>
         )}
 
@@ -739,12 +948,12 @@ export default function InsightsPage() {
                 Order Report - Sales by Coordinator (KAM)
               </h3>
               <ResponsiveContainer width="100%" height={400}>
-                <BarChart data={orderReportCoordinatorSales.slice(0, 10)} layout="vertical">
+                <BarChart data={orderReportCoordinatorSales.slice(0, 15)} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis
                     type="number"
                     tick={{ fill: '#6b7280', fontSize: 12 }}
-                    tickFormatter={(value) => `₹${(value / 1000).toFixed(0)}k`}
+                    tickFormatter={(value) => formatINRCompact(value)}
                   />
                   <YAxis
                     type="category"
@@ -758,7 +967,7 @@ export default function InsightsPage() {
                       border: '1px solid #e5e7eb',
                       borderRadius: '8px',
                     }}
-                    formatter={(value: number) => [`₹${value.toLocaleString('en-IN')}`, 'Sales']}
+                    formatter={(value: number) => [formatINR(value), 'Sales']}
                   />
                   <Bar dataKey="sales" fill="#10b981" radius={[0, 8, 8, 0]} />
                 </BarChart>
@@ -808,7 +1017,7 @@ export default function InsightsPage() {
                           {item.orderId}
                         </td>
                         <td className="py-3 px-4 text-sm text-right text-gray-900 dark:text-white font-medium">
-                          ₹{item.sales.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                          {formatINR(item.sales)}
                         </td>
                       </tr>
                     ))}
@@ -816,6 +1025,70 @@ export default function InsightsPage() {
                 </table>
               </div>
             </motion.div>
+
+            {/* Top Customers by Coordinator - Order Report */}
+            {orderReportCoordinatorCustomers.size > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 1.0 }}
+                className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8"
+              >
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                  Top 10 Customers by Sales Coordinator (Order Report)
+                </h3>
+                <div className="space-y-6">
+                  {Array.from(orderReportCoordinatorCustomers.entries())
+                    .sort((a, b) => {
+                      // Sort coordinators by total sales
+                      const aTotal = a[1].reduce((sum, c) => sum + c.sales, 0);
+                      const bTotal = b[1].reduce((sum, c) => sum + c.sales, 0);
+                      return bTotal - aTotal;
+                    })
+                    .map(([coordinator, customers]) => {
+                      const coordinatorTotal = customers.reduce((sum, c) => sum + c.sales, 0);
+                      return (
+                        <div key={coordinator} className="border-b border-gray-200 dark:border-gray-700 pb-6 last:border-b-0 last:pb-0">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-md font-semibold text-gray-900 dark:text-white">
+                              {coordinator}
+                            </h4>
+                            <span className="text-sm text-gray-600 dark:text-gray-400">
+                              Total: {formatINR(coordinatorTotal)}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {customers.map((customer, index) => {
+                              const percentage = coordinatorTotal > 0 ? (customer.sales / coordinatorTotal) * 100 : 0;
+                              return (
+                                <div
+                                  key={customer.customer}
+                                  className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3 border border-gray-200 dark:border-gray-700"
+                                >
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                      #{index + 1}
+                                    </span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      {percentage.toFixed(1)}%
+                                    </span>
+                                  </div>
+                                  <div className="text-sm font-semibold text-gray-900 dark:text-white mb-1 truncate" title={customer.customer}>
+                                    {customer.customer}
+                                  </div>
+                                  <div className="text-sm text-green-600 dark:text-green-400 font-medium">
+                                    {formatINR(customer.sales)}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </motion.div>
+            )}
           </>
         )}
 
