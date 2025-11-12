@@ -23,13 +23,26 @@ interface Customer {
 interface CustomersResponse {
   success: boolean;
   data?: {
+    users?: {
+      data?: Customer[];
+      pagy?: {
+        page?: number;
+        pages?: number;
+        count?: number;
+        items?: number;
+      };
+    };
     customers?: Customer[];
+    data?: Customer[];
+    items?: Customer[];
+    results?: Customer[];
     pagination?: {
       current_page: number;
       total_pages: number;
       total_items: number;
       items_per_page: number;
     };
+    stats?: any;
   };
   message?: string;
 }
