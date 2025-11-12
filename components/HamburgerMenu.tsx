@@ -10,6 +10,7 @@ const menuItems = [
   { href: '/', label: 'Home', icon: '🏠' },
   { href: '/tables', label: 'Tables', icon: '📊' },
   { href: '/insights', label: 'Insights', icon: '📈' },
+  { href: '/customers', label: 'Customers', icon: '👥' },
 ];
 
 export function HamburgerMenu() {

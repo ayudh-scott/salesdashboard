@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
 
     // Get table schema
     const fields = await getTableSchema(tableId);
-    await ensureTableSchema(tableName, fields);
+    await ensureTableSchema(tableName, fields, tableId);
 
     const sanitizedTableName = tableName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
 

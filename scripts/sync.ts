@@ -32,7 +32,7 @@ async function syncTable(tableId: string, tableName: string): Promise<void> {
     console.log(`   Found ${fields.length} fields`);
 
     // Ensure Supabase table exists with correct schema
-    await ensureTableSchema(tableName, fields);
+    await ensureTableSchema(tableName, fields, tableId);
     console.log(`   ✓ Table schema ensured`);
 
     // Fetch all records

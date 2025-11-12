@@ -23,26 +23,34 @@ export default function TablesPage() {
 
   const fetchTables = async () => {
     try {
+      console.log('🔄 fetchTables called at', new Date().toISOString());
       setLoading(true);
+      
       const { data: metadata, error } = await supabase
         .from('_table_metadata')
         .select('*')
         .order('display_name');
 
       if (error) {
-        console.error('Error fetching tables:', error);
+        console.error('❌ Error fetching tables:', error);
         setTables([]);
         setLoading(false);
         return;
       }
 
+      console.log('📊 Fetched', metadata?.length || 0, 'tables from metadata');
+
       // Fetch record counts with fresh queries
       const tablesWithCounts = await Promise.all(
         (metadata || []).map(async (table) => {
-          const { count } = await supabase
+          const { count, error: countError } = await supabase
             .from(table.table_name)
             .select('*', { count: 'exact', head: true })
             .eq('deleted', false);
+
+          if (countError) {
+            console.warn(`⚠️ Error counting records for ${table.table_name}:`, countError);
+          }
 
           return {
             ...table,
@@ -51,10 +59,14 @@ export default function TablesPage() {
         })
       );
 
+      const totalRecords = tablesWithCounts.reduce((sum, table) => sum + (table.record_count || 0), 0);
+      console.log('✅ Updated tables:', tablesWithCounts.length, 'tables with', totalRecords, 'total records');
+      
       setTables(tablesWithCounts);
       setLastRefreshed(new Date());
+      console.log('✅ Refresh completed at', new Date().toISOString());
     } catch (error) {
-      console.error('Error:', error);
+      console.error('❌ Error in fetchTables:', error);
     } finally {
       setLoading(false);
     }
@@ -106,7 +118,10 @@ export default function TablesPage() {
               All Tables
             </h2>
             <RefreshIndicator
-              onRefresh={fetchTables}
+              onRefresh={() => {
+                console.log('🔄 Refresh button clicked in tables page');
+                fetchTables();
+              }}
               lastRefreshed={lastRefreshed || undefined}
             />
           </div>

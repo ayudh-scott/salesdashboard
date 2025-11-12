@@ -22,7 +22,7 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { formatDate, formatINR, formatINRCompact } from '@/lib/utils';
+import { formatDate, formatINR, formatINRCompact, sanitizeNumeric } from '@/lib/utils';
 import { RefreshIndicator } from '@/components/RefreshIndicator';
 import React from 'react';
 
@@ -31,6 +31,7 @@ interface TableMetadata {
   display_name: string;
   last_synced_at: string | null;
   record_count?: number;
+  airtable_table_id?: string | null;
 }
 
 interface SalesData {
@@ -48,6 +49,13 @@ interface GrowthMetrics {
   wow: number;
   mom: number;
   yoy: number;
+}
+
+interface SalesCoordinatorMapping {
+  id: string;
+  name: string;
+  avatar_url: string | null;
+  source_names: string[];
 }
 
 export default function InsightsPage() {
@@ -74,6 +82,15 @@ export default function InsightsPage() {
   const [viewMode, setViewMode] = useState<'all' | 'coordinator' | 'date'>('all');
   const [rmpCoordinatorCustomers, setRmpCoordinatorCustomers] = useState<Map<string, Array<{customer: string; sales: number}>>>(new Map());
   const [orderReportCoordinatorCustomers, setOrderReportCoordinatorCustomers] = useState<Map<string, Array<{customer: string; sales: number}>>>(new Map());
+  const [coordinatorMappings, setCoordinatorMappings] = useState<SalesCoordinatorMapping[]>([]);
+  const [coordinatorLookup, setCoordinatorLookup] = useState<Record<string, { name: string; avatar_url?: string | null }>>({});
+  const [availableCoordinators, setAvailableCoordinators] = useState<string[]>([]);
+  const [showCoordinatorForm, setShowCoordinatorForm] = useState(false);
+  const [newCoordinatorName, setNewCoordinatorName] = useState('');
+  const [newCoordinatorAvatar, setNewCoordinatorAvatar] = useState('');
+  const [selectedSourceCoordinators, setSelectedSourceCoordinators] = useState<string[]>([]);
+  const [isSavingCoordinator, setIsSavingCoordinator] = useState(false);
+  const [coordinatorFormError, setCoordinatorFormError] = useState<string | null>(null);
   const [growthMetrics, setGrowthMetrics] = useState<GrowthMetrics>({
     dod: 0,
     wow: 0,
@@ -82,6 +99,45 @@ export default function InsightsPage() {
   });
   const [lastRefreshed, setLastRefreshed] = useState<Date | undefined>(undefined);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const normalizeCoordinatorName = (name: string | null | undefined) =>
+    (name ?? '').trim().toLowerCase();
+
+  const buildCoordinatorLookup = (rows: SalesCoordinatorMapping[]) => {
+    const lookup: Record<string, { name: string; avatar_url?: string | null }> = {};
+    rows.forEach((row) => {
+      (row.source_names || []).forEach((source) => {
+        const normalized = normalizeCoordinatorName(source);
+        if (normalized) {
+          lookup[normalized] = { name: row.name, avatar_url: row.avatar_url };
+        }
+      });
+    });
+    return lookup;
+  };
+
+  const fetchCoordinatorMappings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('sales_coordinator')
+        .select('id, name, avatar_url, source_names')
+        .order('name', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching coordinator mappings:', error);
+        return { data: [] as SalesCoordinatorMapping[], lookup: {} as Record<string, { name: string; avatar_url?: string | null }> };
+      }
+
+      const rows = (data || []) as SalesCoordinatorMapping[];
+      const lookup = buildCoordinatorLookup(rows);
+      setCoordinatorMappings(rows);
+      setCoordinatorLookup(lookup);
+      return { data: rows, lookup };
+    } catch (error) {
+      console.error('Unexpected error fetching coordinator mappings:', error);
+      return { data: [] as SalesCoordinatorMapping[], lookup: {} as Record<string, { name: string; avatar_url?: string | null }> };
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -119,8 +175,10 @@ export default function InsightsPage() {
         tablesWithCounts.reduce((sum, table) => sum + (table.record_count || 0), 0)
       );
 
-      // Fetch sales data from RMP Orders
-      await fetchSalesData();
+      const { lookup } = await fetchCoordinatorMappings();
+
+      // Fetch sales data using latest metadata
+      await fetchSalesData(tablesWithCounts, lookup);
       
       setLastRefreshed(new Date());
     } catch (error) {
@@ -131,8 +189,32 @@ export default function InsightsPage() {
     }
   };
 
-  async function fetchSalesData() {
+  async function fetchSalesData(
+    metadataTables?: TableMetadata[],
+    lookupOverride?: Record<string, { name: string; avatar_url?: string | null }>
+  ) {
       try {
+        const metaSource = metadataTables ?? tables;
+        const customTableMeta =
+          metaSource.find(
+            (t) =>
+              t.airtable_table_id === 'tblBVElp9bCASGHow' ||
+              t.display_name?.toLowerCase() === 'custom report' ||
+              t.display_name?.toLowerCase() === 'order report' ||
+              t.table_name === 'order_report'
+          ) ?? null;
+        const customTableName = customTableMeta?.table_name || 'order_report';
+        console.log('🔍 Custom Report table lookup:', {
+          found: customTableMeta ? 'yes' : 'no',
+          tableName: customTableName,
+          metadata: customTableMeta ? {
+            table_name: customTableMeta.table_name,
+            display_name: customTableMeta.display_name,
+            airtable_table_id: customTableMeta.airtable_table_id
+          } : null
+        });
+        const lookup = lookupOverride ?? coordinatorLookup;
+
         // Calculate date range
         const end = new Date();
         const start = new Date();
@@ -163,58 +245,151 @@ export default function InsightsPage() {
           .not('order_date', 'is', null)
           .gte('order_date', startDateStr)
           .lte('order_date', endDateStr)
-          .order('order_date', { ascending: true });
+          .order('order_date', { ascending: true })
+          .limit(50000); // Increased limit to handle large date ranges
 
         if (rmpError) {
           console.error('Error fetching RMP orders:', rmpError);
         }
 
-        // Fetch Order Report data with fresh query
-        console.log('Fetching fresh Order Report data from', startDateStr, 'to', endDateStr);
+        // Fetch Custom Report data with fresh query
+        console.log('Fetching fresh Custom Report data from', startDateStr, 'to', endDateStr, 'using table', customTableName);
         const { data: orderReports, error: orderError } = await supabase
-          .from('order_report')
+          .from(customTableName)
           .select('order_date, total_sales__including_gst_, sales_value__ex_taxes_, key_account_manager__kam_, customer_name, raw_json')
           .eq('deleted', false)
           .not('order_date', 'is', null)
           .gte('order_date', startDateStr)
           .lte('order_date', endDateStr)
-          .order('order_date', { ascending: true });
+          .order('order_date', { ascending: true })
+          .limit(50000); // Increased limit to handle large date ranges
 
         if (orderError) {
           console.error('Error fetching order reports:', orderError);
         }
 
       // Process sales data separately
-      console.log('Fetched', rmpOrders?.length || 0, 'RMP orders and', orderReports?.length || 0, 'order reports');
-      processSalesData(rmpOrders || [], orderReports || []);
-      console.log('Sales data processing completed');
+      console.log('📊 Data fetch summary:', {
+        rmpOrders: rmpOrders?.length || 0,
+        orderReports: orderReports?.length || 0,
+        dateRange: `${startDateStr} to ${endDateStr}`,
+        customTableName
+      });
+      if (orderError) {
+        console.error('❌ Custom Report query error:', orderError);
+      }
+      if (rmpError) {
+        console.error('❌ RMP Orders query error:', rmpError);
+      }
+      processSalesData(rmpOrders || [], orderReports || [], lookup);
+      console.log('✅ Sales data processing completed');
     } catch (error) {
       console.error('Error fetching sales data:', error);
     }
   }
 
-  function processSalesData(rmpOrders: any[], orderReports: any[]) {
+  const toggleSourceCoordinator = (coordinator: string) => {
+    setSelectedSourceCoordinators((prev) =>
+      prev.includes(coordinator)
+        ? prev.filter((item) => item !== coordinator)
+        : [...prev, coordinator]
+    );
+  };
+
+  const handleAddCoordinator = async () => {
+    setCoordinatorFormError(null);
+    const trimmedName = newCoordinatorName.trim();
+    const trimmedAvatar = newCoordinatorAvatar.trim();
+
+    if (!trimmedName) {
+      setCoordinatorFormError('Please enter a display name.');
+      return;
+    }
+
+    if (selectedSourceCoordinators.length === 0) {
+      setCoordinatorFormError('Select at least one existing coordinator to map.');
+      return;
+    }
+
+    setIsSavingCoordinator(true);
+    try {
+      const { error } = await supabase.from('sales_coordinator').insert({
+        name: trimmedName,
+        avatar_url: trimmedAvatar || null,
+        source_names: selectedSourceCoordinators,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      const { lookup } = await fetchCoordinatorMappings();
+      await fetchSalesData(tables, lookup);
+
+      setShowCoordinatorForm(false);
+      setNewCoordinatorName('');
+      setNewCoordinatorAvatar('');
+      setSelectedSourceCoordinators([]);
+    } catch (error: any) {
+      console.error('Error creating coordinator mapping:', error);
+      setCoordinatorFormError(error?.message || 'Failed to create coordinator mapping.');
+    } finally {
+      setIsSavingCoordinator(false);
+    }
+  };
+
+  function processSalesData(
+    rmpOrders: any[],
+    orderReports: any[],
+    lookup: Record<string, { name: string; avatar_url?: string | null }>
+  ) {
+      console.log('🔄 Processing sales data:', {
+        rmpOrdersCount: rmpOrders.length,
+        orderReportsCount: orderReports.length
+      });
+      
       // Process RMP Orders separately
       const rmpSalesByDate = new Map<string, number>();
       const rmpSalesByCoordinator = new Map<string, number>();
       const rmpTableData: any[] = [];
       const rmpCustomersByCoordinator = new Map<string, Map<string, number>>();
       let rmpTotal = 0;
+      const rawCoordinatorNames = new Set<string>();
+      let rmpSkippedNoDate = 0;
+      let rmpSkippedNoAmount = 0;
 
       rmpOrders.forEach((order) => {
         const date = order.order_date ? new Date(order.order_date).toISOString().split('T')[0] : null;
-        if (!date) return;
+        if (!date) {
+          rmpSkippedNoDate++;
+          return;
+        }
 
-        const amount = order.total_amount || 
-          parseFloat(order.raw_json?.total_amount) || 
-          parseFloat(order.raw_json?.amount) || 0;
+        const amountCandidates = [
+          sanitizeNumeric((order as any).total_amount),
+          sanitizeNumeric((order as any).amount),
+          sanitizeNumeric(order.raw_json?.total_amount),
+          sanitizeNumeric(order.raw_json?.amount),
+        ];
+
+        const amount = amountCandidates.find((val) => val !== 0) ?? 0;
         
         if (amount > 0) {
           rmpSalesByDate.set(date, (rmpSalesByDate.get(date) || 0) + amount);
           rmpTotal += amount;
 
-          const coordinator = order.sales_coordinator || order.raw_json?.sales_coordinator || 'Unknown';
-          rmpSalesByCoordinator.set(coordinator, (rmpSalesByCoordinator.get(coordinator) || 0) + amount);
+          const baseCoordinator =
+            order.sales_coordinator ||
+            order.raw_json?.sales_coordinator ||
+            'Unknown';
+          const cleanedCoordinator = (baseCoordinator ?? '').toString().trim() || 'Unknown';
+          const mappedCoordinator =
+            lookup[normalizeCoordinatorName(cleanedCoordinator)]?.name || cleanedCoordinator;
+
+          rmpSalesByCoordinator.set(
+            mappedCoordinator,
+            (rmpSalesByCoordinator.get(mappedCoordinator) || 0) + amount
+          );
           
           // Extract customer name from "Customer Name" field
           const customer = order.customer_name || 
@@ -224,48 +399,79 @@ export default function InsightsPage() {
                           'Unknown Customer';
           
           // Track customers per coordinator
-          if (!rmpCustomersByCoordinator.has(coordinator)) {
-            rmpCustomersByCoordinator.set(coordinator, new Map());
+          if (!rmpCustomersByCoordinator.has(mappedCoordinator)) {
+            rmpCustomersByCoordinator.set(mappedCoordinator, new Map());
           }
-          const customerMap = rmpCustomersByCoordinator.get(coordinator)!;
+          const customerMap = rmpCustomersByCoordinator.get(mappedCoordinator)!;
           customerMap.set(customer, (customerMap.get(customer) || 0) + amount);
           
           // Add to table data
           rmpTableData.push({
             date,
-            coordinator,
+            coordinator: mappedCoordinator,
             sales: amount,
             orderId: order.raw_json?.order_id || '-',
             customer,
           });
+
+          rawCoordinatorNames.add(cleanedCoordinator);
+        } else {
+          rmpSkippedNoAmount++;
         }
       });
+      
+      console.log('📈 RMP Orders processing:', {
+        processed: rmpOrders.length,
+        skippedNoDate: rmpSkippedNoDate,
+        skippedNoAmount: rmpSkippedNoAmount,
+        totalSales: rmpTotal
+      });
 
-      // Process Order Reports separately
+      // Process Custom Reports separately
       const orderReportSalesByDate = new Map<string, number>();
       const orderReportSalesByCoordinator = new Map<string, number>();
       const orderReportTableData: any[] = [];
       const orderReportCustomersByCoordinator = new Map<string, Map<string, number>>();
       let orderReportTotal = 0;
+      let orderReportSkippedNoDate = 0;
+      let orderReportSkippedNoAmount = 0;
 
       orderReports.forEach((order) => {
         const date = order.order_date ? new Date(order.order_date).toISOString().split('T')[0] : null;
-        if (!date) return;
+        if (!date) {
+          orderReportSkippedNoDate++;
+          return;
+        }
 
-        const amount = parseFloat(order.total_sales__including_gst_) || 
-          parseFloat(order.sales_value__ex_taxes_) ||
-          parseFloat(order.raw_json?.total_sales__including_gst_) ||
-          parseFloat(order.raw_json?.sales_value__ex_taxes_) || 0;
+        const amountCandidates = [
+          sanitizeNumeric(order.total_sales__including_gst_),
+          sanitizeNumeric(order.sales_value__ex_taxes_),
+          sanitizeNumeric((order as any).total_amount),
+          sanitizeNumeric(order.raw_json?.total_sales__including_gst_),
+          sanitizeNumeric(order.raw_json?.sales_value__ex_taxes_),
+          sanitizeNumeric(order.raw_json?.total_amount),
+          sanitizeNumeric(order.raw_json?.amount),
+        ];
+
+        const amount = amountCandidates.find((val) => val !== 0) ?? 0;
         
         if (amount > 0) {
           orderReportSalesByDate.set(date, (orderReportSalesByDate.get(date) || 0) + amount);
           orderReportTotal += amount;
 
-          const coordinator = order.key_account_manager__kam_ || 
-            order.raw_json?.key_account_manager__kam_ || 
-            order.raw_json?.sales_coordinator || 
+          const baseCoordinator =
+            order.key_account_manager__kam_ ||
+            order.raw_json?.key_account_manager__kam_ ||
+            order.raw_json?.['Key Account Manager (KAM)'] ||
+            order.raw_json?.sales_coordinator ||
             'Unknown';
-          orderReportSalesByCoordinator.set(coordinator, (orderReportSalesByCoordinator.get(coordinator) || 0) + amount);
+          const cleanedCoordinator = (baseCoordinator ?? '').toString().trim() || 'Unknown';
+          const mappedCoordinator =
+            lookup[normalizeCoordinatorName(cleanedCoordinator)]?.name || cleanedCoordinator;
+          orderReportSalesByCoordinator.set(
+            mappedCoordinator,
+            (orderReportSalesByCoordinator.get(mappedCoordinator) || 0) + amount
+          );
           
           // Extract customer name from "Customer Name" field
           const customer = order.customer_name ||
@@ -276,21 +482,32 @@ export default function InsightsPage() {
                           'Unknown Customer';
           
           // Track customers per coordinator
-          if (!orderReportCustomersByCoordinator.has(coordinator)) {
-            orderReportCustomersByCoordinator.set(coordinator, new Map());
+          if (!orderReportCustomersByCoordinator.has(mappedCoordinator)) {
+            orderReportCustomersByCoordinator.set(mappedCoordinator, new Map());
           }
-          const customerMap = orderReportCustomersByCoordinator.get(coordinator)!;
+          const customerMap = orderReportCustomersByCoordinator.get(mappedCoordinator)!;
           customerMap.set(customer, (customerMap.get(customer) || 0) + amount);
           
           // Add to table data
           orderReportTableData.push({
             date,
-            coordinator,
+            coordinator: mappedCoordinator,
             sales: amount,
             orderId: order.raw_json?.order_id || order.raw_json?.jobsheet_number || '-',
             customer,
           });
+
+          rawCoordinatorNames.add(cleanedCoordinator);
+        } else {
+          orderReportSkippedNoAmount++;
         }
+      });
+      
+      console.log('📈 Custom Report processing:', {
+        processed: orderReports.length,
+        skippedNoDate: orderReportSkippedNoDate,
+        skippedNoAmount: orderReportSkippedNoAmount,
+        totalSales: orderReportTotal
       });
 
       // Convert to arrays for charts
@@ -330,7 +547,7 @@ export default function InsightsPage() {
       });
       setRmpCoordinatorCustomers(rmpTopCustomers);
 
-      // Process top customers per coordinator for Order Report
+      // Process top customers per coordinator for Custom Report
       const orderReportTopCustomers = new Map<string, Array<{customer: string; sales: number}>>();
       orderReportCustomersByCoordinator.forEach((customerMap, coordinator) => {
         const customers = Array.from(customerMap.entries())
@@ -340,6 +557,12 @@ export default function InsightsPage() {
         orderReportTopCustomers.set(coordinator, customers);
       });
       setOrderReportCoordinatorCustomers(orderReportTopCustomers);
+
+      setAvailableCoordinators(
+        Array.from(rawCoordinatorNames)
+          .map((name) => name)
+          .sort((a, b) => a.localeCompare(b))
+      );
 
       // Calculate growth metrics from combined data
       const combinedDaily = [...rmpDailyArray, ...orderReportDailyArray].reduce((acc, item) => {
@@ -550,7 +773,7 @@ export default function InsightsPage() {
             </div>
             <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
               RMP: {formatINR(rmpTotalSales)} | 
-              Orders: {formatINR(orderReportTotalSales)}
+              Custom: {formatINR(orderReportTotalSales)}
             </div>
           </motion.div>
 
@@ -612,9 +835,181 @@ export default function InsightsPage() {
             transition={{ delay: 0.6 }}
             className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8"
           >
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-              Combined Sales Coordinator Performance
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Combined Sales Coordinator Performance
+              </h3>
+              <button
+                onClick={() => {
+                  setCoordinatorFormError(null);
+                  setShowCoordinatorForm((prev) => !prev);
+                }}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                {showCoordinatorForm ? 'Close' : 'Add Custom Coordinator'}
+              </button>
+            </div>
+
+            {showCoordinatorForm && (
+              <div className="mb-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Display Name
+                    </label>
+                    <input
+                      type="text"
+                      value={newCoordinatorName}
+                      onChange={(e) => setNewCoordinatorName(e.target.value)}
+                      className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="e.g., Central Region Team"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Avatar URL (optional)
+                    </label>
+                    <input
+                      type="url"
+                      value={newCoordinatorAvatar}
+                      onChange={(e) => setNewCoordinatorAvatar(e.target.value)}
+                      className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="https://..."
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Map Existing Coordinators
+                    </span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      Already mapped coordinators are disabled.
+                    </span>
+                  </div>
+                  <div className="grid gap-2 max-h-48 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-md p-3 bg-white dark:bg-gray-900/60">
+                    {availableCoordinators.length === 0 && (
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        No coordinator names detected yet. Refresh after data loads.
+                      </p>
+                    )}
+                    {availableCoordinators.map((coordinator) => {
+                      const normalized = normalizeCoordinatorName(coordinator);
+                      const mapped = Boolean(coordinatorLookup[normalized]);
+                      return (
+                        <label
+                          key={coordinator}
+                          className={`flex items-center gap-3 text-sm ${
+                            mapped ? 'text-gray-400' : 'text-gray-700 dark:text-gray-200'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            value={coordinator}
+                            disabled={mapped}
+                            checked={selectedSourceCoordinators.includes(coordinator)}
+                            onChange={() => toggleSourceCoordinator(coordinator)}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500 disabled:opacity-50"
+                          />
+                          <span>{coordinator}</span>
+                          {mapped && (
+                            <span className="text-xs text-gray-400">
+                              (Mapped to {coordinatorLookup[normalized]?.name})
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {coordinatorFormError && (
+                  <p className="mt-3 text-sm text-red-500">{coordinatorFormError}</p>
+                )}
+
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={handleAddCoordinator}
+                    disabled={isSavingCoordinator}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {isSavingCoordinator ? (
+                      <>
+                        <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24">
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8v4l3-3-3-3v4a12 12 0 00-12 12h4z"
+                          />
+                        </svg>
+                        Saving...
+                      </>
+                    ) : (
+                      'Save Coordinator'
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCoordinatorForm(false);
+                      setNewCoordinatorName('');
+                      setNewCoordinatorAvatar('');
+                      setSelectedSourceCoordinators([]);
+                      setCoordinatorFormError(null);
+                    }}
+                    className="px-4 py-2 rounded-md border border-gray-300 dark:border-gray-600 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {coordinatorMappings.length > 0 && (
+              <div className="mb-6">
+                <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  Active Custom Coordinators
+                </h4>
+                <div className="flex flex-wrap gap-3">
+                  {coordinatorMappings.map((mapping) => (
+                    <div
+                      key={mapping.id}
+                      className="flex items-center gap-3 rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2 bg-gray-50 dark:bg-gray-900/50 text-sm text-gray-700 dark:text-gray-300"
+                    >
+                      {mapping.avatar_url ? (
+                        <img
+                          src={mapping.avatar_url}
+                          alt={mapping.name}
+                          className="h-8 w-8 rounded-full object-cover border border-gray-200 dark:border-gray-700"
+                        />
+                      ) : (
+                        <div className="h-8 w-8 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center text-xs font-semibold border border-blue-200 dark:border-blue-700">
+                          {mapping.name.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <div>
+                        <div className="font-semibold text-gray-900 dark:text-white">{mapping.name}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          {mapping.source_names.join(', ')}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -626,7 +1021,7 @@ export default function InsightsPage() {
                       RMP Orders
                     </th>
                     <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">
-                      Order Report
+                      Custom Report
                     </th>
                     <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">
                       Total Sales
@@ -674,7 +1069,12 @@ export default function InsightsPage() {
                             className="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50"
                           >
                             <td className="py-3 px-4 text-sm text-gray-900 dark:text-white font-medium">
-                              {item.coordinator}
+                              <div className="flex items-center gap-2">
+                                {index === 0 && <span className="text-xl" title="🥇 Gold">🥇</span>}
+                                {index === 1 && <span className="text-xl" title="🥈 Silver">🥈</span>}
+                                {index === 2 && <span className="text-xl" title="🥉 Bronze">🥉</span>}
+                                <span>{item.coordinator}</span>
+                              </div>
                             </td>
                             <td className="py-3 px-4 text-sm text-right text-gray-600 dark:text-gray-400">
                               {formatINR(item.rmp)}
@@ -947,7 +1347,7 @@ export default function InsightsPage() {
           </>
         )}
 
-        {/* Order Report - Sales Coordinator Performance */}
+        {/* Custom Report - Sales Coordinator Performance */}
         {orderReportCoordinatorSales.length > 0 && (
           <>
             <motion.div
@@ -957,7 +1357,7 @@ export default function InsightsPage() {
               className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8"
             >
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                Order Report - Sales by Coordinator (KAM)
+                Custom Report - Sales by Coordinator (KAM)
               </h3>
               <ResponsiveContainer width="100%" height={400}>
                 <BarChart data={orderReportCoordinatorSales.slice(0, 15)} layout="vertical">
@@ -993,7 +1393,7 @@ export default function InsightsPage() {
               className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8"
             >
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                Order Report - Detailed View (Sales Coordinator & Date)
+                Custom Report - Detailed View (Sales Coordinator & Date)
               </h3>
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -1038,7 +1438,7 @@ export default function InsightsPage() {
               </div>
             </motion.div>
 
-            {/* Top Customers by Coordinator - Order Report */}
+            {/* Top Customers by Coordinator - Custom Report */}
             {orderReportCoordinatorCustomers.size > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -1047,7 +1447,7 @@ export default function InsightsPage() {
                 className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8"
               >
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                  Top 5 Customers by Sales Coordinator (Order Report)
+                  Top 5 Customers by Sales Coordinator (Custom Report)
                 </h3>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
                   Showing top 5 customers with percentage of contribution and amount

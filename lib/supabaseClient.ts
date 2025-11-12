@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { sanitizeNumeric } from './utils';
 
 // Lazy initialization - only create clients when needed
 let supabaseAdminInstance: SupabaseClient | null = null;
@@ -108,7 +109,7 @@ export function convertFieldValue(value: any, fieldType: string): any {
     case 'number':
     case 'percent':
     case 'currency':
-      return typeof value === 'number' ? value : parseFloat(value) || 0;
+      return sanitizeNumeric(value);
     default:
       return value;
   }
@@ -178,7 +179,8 @@ DO UPDATE SET
  */
 export async function ensureTableSchema(
   tableName: string,
-  fields: Array<{ id: string; name: string; type: string }>
+  fields: Array<{ id: string; name: string; type: string }>,
+  airtableTableId?: string
 ): Promise<void> {
   const sanitizedTableName = tableName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
 
@@ -204,7 +206,7 @@ export async function ensureTableSchema(
     .upsert({
       table_name: sanitizedTableName,
       display_name: tableName,
-      airtable_table_id: tableName,
+      airtable_table_id: airtableTableId || tableName, // Use actual Airtable table ID if provided
       last_synced_at: new Date().toISOString(),
     });
 }

@@ -60,3 +60,34 @@ export function formatINRCompact(amount: number): string {
   return formatINR(amount);
 }
 
+/**
+ * Safely convert mixed numeric strings (₹, commas, etc.) into a number.
+ * Returns 0 for invalid/empty values.
+ */
+export function sanitizeNumeric(value: unknown): number {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value === 'string') {
+    const cleaned = value
+      .replace(/,/g, '')
+      .replace(/₹/g, '')
+      .replace(/[^\d.-]/g, '')
+      .trim();
+
+    if (cleaned === '' || cleaned === '.' || cleaned === '-' || cleaned === '-.') {
+      return 0;
+    }
+
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
+}
+

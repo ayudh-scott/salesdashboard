@@ -59,6 +59,11 @@ SUPABASE_ANON_KEY=anon_XXXXXXXXXXXX
 
 # Webhook Security
 WEBHOOK_SECRET=supersecretstring
+
+# Leaderboard API (for Customers page)
+LEADERBOARD_API_BASE_URL=https://leaderboard.sagarfab.com/api/v1
+LEADERBOARD_API_EMAIL=admin@scottinternational.com
+LEADERBOARD_API_PASSWORD=HiJack!
 ```
 
 **Getting Your Credentials:**
@@ -519,4 +524,3 @@ Contributions welcome! Please open an issue or PR.
 ---
 
 Built with ❤️ using Next.js, Supabase, and Airtable
-
