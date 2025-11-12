@@ -16,11 +16,35 @@ interface TableMetadata {
   record_count?: number;
 }
 
+interface SyncSummary {
+  success: boolean;
+  totalTables: number;
+  completedTables: number;
+  totalRecordsFetched: number;
+  totalRecordsSynced: number;
+  totalRecordsAdded: number;
+  totalRecordsUpdated: number;
+  tables: Array<{
+    tableName: string;
+    recordsFetched: number;
+    recordsSynced: number;
+    recordsBefore: number;
+    recordsAfter: number;
+    recordsAdded: number;
+    recordsUpdated: number;
+    error?: string;
+  }>;
+  error?: string;
+}
+
 export default function Home() {
   const [tables, setTables] = useState<TableMetadata[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalRecords, setTotalRecords] = useState(0);
   const [lastRefreshed, setLastRefreshed] = useState<Date | undefined>(undefined);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<string>('');
+  const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null);
 
   const fetchData = async () => {
     try {
@@ -71,6 +95,50 @@ export default function Home() {
     }
   };
 
+  const handleSync = async () => {
+    try {
+      setIsSyncing(true);
+      setSyncProgress('Starting sync...');
+      setSyncSummary(null);
+
+      const response = await fetch('/api/sync', {
+        method: 'POST',
+      });
+
+      const summary: SyncSummary = await response.json();
+
+      if (!response.ok || !summary.success) {
+        throw new Error(summary.error || 'Sync failed');
+      }
+
+      setSyncSummary(summary);
+      setSyncProgress('Sync completed!');
+
+      // Refresh data after sync
+      await fetchData();
+    } catch (error: any) {
+      console.error('Sync error:', error);
+      setSyncSummary({
+        success: false,
+        totalTables: 0,
+        completedTables: 0,
+        totalRecordsFetched: 0,
+        totalRecordsSynced: 0,
+        totalRecordsAdded: 0,
+        totalRecordsUpdated: 0,
+        tables: [],
+        error: error.message || 'Sync failed',
+      });
+      setSyncProgress('Sync failed');
+    } finally {
+      setIsSyncing(false);
+      // Clear progress message after 3 seconds
+      setTimeout(() => {
+        setSyncProgress('');
+      }, 3000);
+    }
+  };
+
   useEffect(() => {
     fetchData();
 
@@ -115,18 +183,65 @@ export default function Home() {
           className="mb-8"
         >
           <div className="flex-1">
-            <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-              Dashboard Overview
-            </h2>
-            <p className="text-gray-600 dark:text-gray-400">
-              Real-time data synced from Airtable
-            </p>
-            <div className="mt-2">
-              <RefreshIndicator
-                onRefresh={fetchData}
-                lastRefreshed={lastRefreshed || undefined}
-              />
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div className="flex-1">
+                <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+                  Dashboard Overview
+                </h2>
+                <p className="text-gray-600 dark:text-gray-400">
+                  Real-time data synced from Airtable
+                </p>
+                <div className="mt-2">
+                  <RefreshIndicator
+                    onRefresh={fetchData}
+                    lastRefreshed={lastRefreshed || undefined}
+                  />
+                </div>
+              </div>
+              <button
+                onClick={handleSync}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-800 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
+              >
+                {isSyncing ? (
+                  <>
+                    <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8v4l3-3-3-3v4a12 12 0 00-12 12h4z"
+                      />
+                    </svg>
+                    <span>Syncing...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                      />
+                    </svg>
+                    <span>Sync All Tables</span>
+                  </>
+                )}
+              </button>
             </div>
+            {syncProgress && (
+              <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+                {syncProgress}
+              </div>
+            )}
           </div>
         </motion.div>
 
@@ -172,6 +287,99 @@ export default function Home() {
           </motion.div>
         </div>
 
+        {/* Sync Summary */}
+        {syncSummary && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`mb-8 rounded-xl shadow-sm border p-6 ${
+              syncSummary.success
+                ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+            }`}
+          >
+            <div className="flex items-start justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                {syncSummary.success ? '✅ Sync Completed' : '❌ Sync Failed'}
+              </h3>
+              <button
+                onClick={() => setSyncSummary(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            {syncSummary.success ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <div className="text-sm text-gray-600 dark:text-gray-400">Tables Synced</div>
+                    <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                      {syncSummary.completedTables} / {syncSummary.totalTables}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-600 dark:text-gray-400">Records Fetched</div>
+                    <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                      {syncSummary.totalRecordsFetched.toLocaleString()}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-600 dark:text-gray-400">Records Added</div>
+                    <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                      +{syncSummary.totalRecordsAdded.toLocaleString()}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-600 dark:text-gray-400">Records Updated</div>
+                    <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                      {syncSummary.totalRecordsUpdated.toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+                {syncSummary.tables.length > 0 && (
+                  <div className="mt-4">
+                    <details className="cursor-pointer">
+                      <summary className="text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">
+                        View table details ({syncSummary.tables.length} tables)
+                      </summary>
+                      <div className="mt-3 space-y-2 max-h-64 overflow-y-auto">
+                        {syncSummary.tables.map((table) => (
+                          <div
+                            key={table.tableName}
+                            className="text-sm bg-white dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-700"
+                          >
+                            <div className="font-medium text-gray-900 dark:text-white mb-1">
+                              {table.tableName}
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-gray-600 dark:text-gray-400">
+                              <div>Fetched: {table.recordsFetched}</div>
+                              <div>Added: <span className="text-green-600 dark:text-green-400">+{table.recordsAdded}</span></div>
+                              <div>Updated: <span className="text-blue-600 dark:text-blue-400">{table.recordsUpdated}</span></div>
+                              <div>Total: {table.recordsAfter}</div>
+                            </div>
+                            {table.error && (
+                              <div className="mt-1 text-xs text-red-600 dark:text-red-400">
+                                Error: {table.error}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-red-600 dark:text-red-400">
+                {syncSummary.error || 'Sync failed'}
+              </div>
+            )}
+          </motion.div>
+        )}
+
         {/* Quick Access Tables */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -196,10 +404,7 @@ export default function Home() {
                 No tables synced yet
               </p>
               <p className="text-sm text-gray-500 dark:text-gray-500">
-                Run <code className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">
-                  npm run sync
-                </code>{' '}
-                to sync your Airtable base
+                Click the <strong>"Sync All Tables"</strong> button above to sync your Airtable base
               </p>
             </div>
           ) : (

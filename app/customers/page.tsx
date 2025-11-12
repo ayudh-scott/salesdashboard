@@ -113,12 +113,21 @@ export default function CustomersPage() {
       setCustomers(Array.isArray(customers) ? customers : []);
       
       // Handle pagination from pagy object or pagination object
-      const pagination = data.data.users?.pagy || data.data.pagination;
-      if (pagination) {
-        setCurrentPage(pagination.page || pagination.current_page || 1);
-        setTotalPages(pagination.pages || pagination.total_pages || 1);
-        setTotalItems(pagination.count || pagination.total_items || 0);
-        setItemsPerPage(pagination.items || pagination.items_per_page || itemsPerPage);
+      const pagy = data.data.users?.pagy;
+      const pagination = data.data.pagination;
+      
+      if (pagy) {
+        // Handle pagy format
+        setCurrentPage(pagy.page || 1);
+        setTotalPages(pagy.pages || 1);
+        setTotalItems(pagy.count || 0);
+        setItemsPerPage(pagy.items || itemsPerPage);
+      } else if (pagination) {
+        // Handle pagination format
+        setCurrentPage(pagination.current_page || 1);
+        setTotalPages(pagination.total_pages || 1);
+        setTotalItems(pagination.total_items || 0);
+        setItemsPerPage(pagination.items_per_page || itemsPerPage);
       }
 
       setLastRefreshed(new Date());
