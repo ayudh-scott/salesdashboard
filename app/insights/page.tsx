@@ -1279,10 +1279,10 @@ export default function InsightsPage() {
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
                   Top 5 Customers by Sales Coordinator (RMP Orders)
                 </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  Showing top 5 customers with percentage of contribution and amount
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+                  Interactive charts showing top 5 customers with sales amount and contribution percentage
                 </p>
-                <div className="space-y-6">
+                <div className="space-y-8">
                   {Array.from(rmpCoordinatorCustomers.entries())
                     .sort((a, b) => {
                       // Sort coordinators by total sales
@@ -1292,8 +1292,19 @@ export default function InsightsPage() {
                     })
                     .map(([coordinator, customers]) => {
                       const coordinatorTotal = customers.reduce((sum, c) => sum + c.sales, 0);
+                      const chartData = customers.map((customer, index) => {
+                        const percentage = coordinatorTotal > 0 ? (customer.sales / coordinatorTotal) * 100 : 0;
+                        return {
+                          name: customer.customer.length > 20 ? customer.customer.substring(0, 20) + '...' : customer.customer,
+                          fullName: customer.customer,
+                          sales: customer.sales,
+                          percentage: percentage,
+                          rank: index + 1,
+                        };
+                      });
+                      
                       return (
-                        <div key={coordinator} className="border-b border-gray-200 dark:border-gray-700 pb-6 last:border-b-0 last:pb-0">
+                        <div key={coordinator} className="border-b border-gray-200 dark:border-gray-700 pb-8 last:border-b-0 last:pb-0">
                           <div className="flex items-center justify-between mb-4">
                             <h4 className="text-md font-semibold text-gray-900 dark:text-white">
                               {coordinator}
@@ -1302,42 +1313,50 @@ export default function InsightsPage() {
                               Total: {formatINR(coordinatorTotal)}
                             </span>
                           </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {customers.map((customer, index) => {
-                              const percentage = coordinatorTotal > 0 ? (customer.sales / coordinatorTotal) * 100 : 0;
-                              return (
-                                <div
-                                  key={customer.customer}
-                                  className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow"
-                                >
-                                  <div className="flex items-center justify-between mb-2">
-                                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400 bg-blue-100 dark:bg-blue-900/30 px-2 py-1 rounded">
-                                      #{index + 1}
-                                    </span>
-                                  </div>
-                                  <div className="text-sm font-semibold text-gray-900 dark:text-white mb-3 truncate" title={customer.customer}>
-                                    {customer.customer}
-                                  </div>
-                                  <div className="flex items-baseline justify-between mb-1">
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                                      Contribution:
-                                    </span>
-                                    <span className="text-sm font-semibold text-gray-600 dark:text-gray-300">
-                                      {percentage.toFixed(1)}%
-                                    </span>
-                                  </div>
-                                  <div className="flex items-baseline justify-between">
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                                      Amount:
-                                    </span>
-                                    <span className="text-base text-blue-600 dark:text-blue-400 font-bold">
-                                      {formatINR(customer.sales)}
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                          <ResponsiveContainer width="100%" height={300}>
+                            <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                              <XAxis
+                                type="number"
+                                tick={{ fill: '#6b7280', fontSize: 12 }}
+                                tickFormatter={(value) => formatINRCompact(value)}
+                              />
+                              <YAxis
+                                type="category"
+                                dataKey="name"
+                                tick={{ fill: '#6b7280', fontSize: 12 }}
+                                width={150}
+                              />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: '#fff',
+                                  border: '1px solid #e5e7eb',
+                                  borderRadius: '8px',
+                                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                                }}
+                                formatter={(value: number, name: string, props: any) => {
+                                  if (name === 'sales') {
+                                    return [
+                                      `${formatINR(value)} (${props.payload.percentage.toFixed(1)}%)`,
+                                      props.payload.fullName
+                                    ];
+                                  }
+                                  return [formatINR(value), 'Sales'];
+                                }}
+                                labelFormatter={() => ''}
+                              />
+                              <Bar 
+                                dataKey="sales" 
+                                fill="#3b82f6" 
+                                radius={[0, 8, 8, 0]}
+                                animationDuration={800}
+                              >
+                                {chartData.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={index === 0 ? '#2563eb' : index === 1 ? '#3b82f6' : index === 2 ? '#60a5fa' : '#93c5fd'} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
                         </div>
                       );
                     })}
@@ -1449,10 +1468,10 @@ export default function InsightsPage() {
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
                   Top 5 Customers by Sales Coordinator (Custom Report)
                 </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  Showing top 5 customers with percentage of contribution and amount
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+                  Interactive charts showing top 5 customers with sales amount and contribution percentage
                 </p>
-                <div className="space-y-6">
+                <div className="space-y-8">
                   {Array.from(orderReportCoordinatorCustomers.entries())
                     .sort((a, b) => {
                       // Sort coordinators by total sales
@@ -1462,8 +1481,19 @@ export default function InsightsPage() {
                     })
                     .map(([coordinator, customers]) => {
                       const coordinatorTotal = customers.reduce((sum, c) => sum + c.sales, 0);
+                      const chartData = customers.map((customer, index) => {
+                        const percentage = coordinatorTotal > 0 ? (customer.sales / coordinatorTotal) * 100 : 0;
+                        return {
+                          name: customer.customer.length > 20 ? customer.customer.substring(0, 20) + '...' : customer.customer,
+                          fullName: customer.customer,
+                          sales: customer.sales,
+                          percentage: percentage,
+                          rank: index + 1,
+                        };
+                      });
+                      
                       return (
-                        <div key={coordinator} className="border-b border-gray-200 dark:border-gray-700 pb-6 last:border-b-0 last:pb-0">
+                        <div key={coordinator} className="border-b border-gray-200 dark:border-gray-700 pb-8 last:border-b-0 last:pb-0">
                           <div className="flex items-center justify-between mb-4">
                             <h4 className="text-md font-semibold text-gray-900 dark:text-white">
                               {coordinator}
@@ -1472,42 +1502,50 @@ export default function InsightsPage() {
                               Total: {formatINR(coordinatorTotal)}
                             </span>
                           </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {customers.map((customer, index) => {
-                              const percentage = coordinatorTotal > 0 ? (customer.sales / coordinatorTotal) * 100 : 0;
-                              return (
-                                <div
-                                  key={customer.customer}
-                                  className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow"
-                                >
-                                  <div className="flex items-center justify-between mb-2">
-                                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400 bg-green-100 dark:bg-green-900/30 px-2 py-1 rounded">
-                                      #{index + 1}
-                                    </span>
-                                  </div>
-                                  <div className="text-sm font-semibold text-gray-900 dark:text-white mb-3 truncate" title={customer.customer}>
-                                    {customer.customer}
-                                  </div>
-                                  <div className="flex items-baseline justify-between mb-1">
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                                      Contribution:
-                                    </span>
-                                    <span className="text-sm font-semibold text-gray-600 dark:text-gray-300">
-                                      {percentage.toFixed(1)}%
-                                    </span>
-                                  </div>
-                                  <div className="flex items-baseline justify-between">
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                                      Amount:
-                                    </span>
-                                    <span className="text-base text-green-600 dark:text-green-400 font-bold">
-                                      {formatINR(customer.sales)}
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                          <ResponsiveContainer width="100%" height={300}>
+                            <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                              <XAxis
+                                type="number"
+                                tick={{ fill: '#6b7280', fontSize: 12 }}
+                                tickFormatter={(value) => formatINRCompact(value)}
+                              />
+                              <YAxis
+                                type="category"
+                                dataKey="name"
+                                tick={{ fill: '#6b7280', fontSize: 12 }}
+                                width={150}
+                              />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: '#fff',
+                                  border: '1px solid #e5e7eb',
+                                  borderRadius: '8px',
+                                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                                }}
+                                formatter={(value: number, name: string, props: any) => {
+                                  if (name === 'sales') {
+                                    return [
+                                      `${formatINR(value)} (${props.payload.percentage.toFixed(1)}%)`,
+                                      props.payload.fullName
+                                    ];
+                                  }
+                                  return [formatINR(value), 'Sales'];
+                                }}
+                                labelFormatter={() => ''}
+                              />
+                              <Bar 
+                                dataKey="sales" 
+                                fill="#10b981" 
+                                radius={[0, 8, 8, 0]}
+                                animationDuration={800}
+                              >
+                                {chartData.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={index === 0 ? '#059669' : index === 1 ? '#10b981' : index === 2 ? '#34d399' : '#6ee7b7'} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
                         </div>
                       );
                     })}
