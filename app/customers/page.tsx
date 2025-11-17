@@ -8,15 +8,16 @@ import { RefreshIndicator } from '@/components/RefreshIndicator';
 
 interface Customer {
   id: number;
-  name: string;
-  email: string;
-  phone: string | null;
+  name: string | { name?: string; value?: string } | null;
+  email: string | { value?: string } | null;
+  phone: string | { value?: string } | null;
   role: string;
   approved: boolean;
   onboarded: boolean;
-  company_name?: string;
-  gst_no?: string;
-  zone?: string;
+  company_name?: string | { name?: string; value?: string } | null;
+  customer_company_name?: string | { name?: string; value?: string } | null;
+  gst_no?: string | { value?: string } | null;
+  zone?: string | { name?: string; value?: string } | null;
   [key: string]: any;
 }
 
@@ -235,15 +236,34 @@ export default function CustomersPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
               {customers.map((customer, index) => {
+                // Helper function to safely extract string values
+                const extractString = (value: any): string => {
+                  if (typeof value === 'string') return value;
+                  if (value && typeof value === 'object') {
+                    return value.name || value.value || '';
+                  }
+                  return '';
+                };
+
                 // Safely extract name - handle both string and object formats
-                const customerName = typeof customer.name === 'string' 
-                  ? customer.name 
-                  : (customer.name?.name || customer.name?.value || customer.customer_company_name || customer.company_name || 'Unknown Customer');
+                let customerName: string = 'Unknown Customer';
+                if (typeof customer.name === 'string') {
+                  customerName = customer.name;
+                } else if (customer.name) {
+                  customerName = customer.name.name || customer.name.value || extractString(customer.customer_company_name) || extractString(customer.company_name) || 'Unknown Customer';
+                } else {
+                  customerName = extractString(customer.customer_company_name) || extractString(customer.company_name) || 'Unknown Customer';
+                }
                 
                 // Safely extract company name
-                const companyName = typeof customer.company_name === 'string'
-                  ? customer.company_name
-                  : (customer.company_name?.name || customer.company_name?.value || customer.customer_company_name || '');
+                let companyName: string = '';
+                if (typeof customer.company_name === 'string') {
+                  companyName = customer.company_name;
+                } else if (customer.company_name) {
+                  companyName = customer.company_name.name || customer.company_name.value || extractString(customer.customer_company_name) || '';
+                } else {
+                  companyName = extractString(customer.customer_company_name) || '';
+                }
                 
                 // Safely extract other fields
                 const customerEmail = typeof customer.email === 'string' ? customer.email : (customer.email?.value || '');
